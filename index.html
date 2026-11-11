@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Белая доска</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="toolbar">
+    <div class="group colors">
+        <button class="color-btn active" data-color="#000000" style="--c:#000000" aria-label="Чёрный"></button>
+        <button class="color-btn" data-color="#e53935" style="--c:#e53935" aria-label="Красный"></button>
+        <button class="color-btn" data-color="#1e88e5" style="--c:#1e88e5" aria-label="Синий"></button>
+        <button class="color-btn" data-color="#43a047" style="--c:#43a047" aria-label="Зелёный"></button>
+        <button class="color-btn" data-color="#fb8c00" style="--c:#fb8c00" aria-label="Оранжевый"></button>
+    </div>
+
+    <div class="group shapes">
+        <button class="shape-btn active" data-shape="free" title="Кисть">✎</button>
+        <button class="shape-btn" data-shape="circle" title="Окружность">◯</button>
+        <button class="shape-btn" data-shape="square" title="Квадрат">□</button>
+        <button class="shape-btn" data-shape="rect" title="Прямоугольник">▭</button>
+        <button class="shape-btn" data-shape="triangle" title="Треугольник">△</button>
+        <button class="shape-btn" data-shape="trapezoid" title="Трапеция">⏢</button>
+        <button class="shape-btn" data-shape="parallelogram" title="Параллелограмм">▱</button>
+    </div>
+
+    <div class="group actions">
+        <button id="eraserBtn" title="Ластик">🧽</button>
+        <button id="clearBtn" title="Очистить доску">🗑</button>
+    </div>
+</div>
+
+<canvas id="board"></canvas>
+
+<script src="script.js"></script>
+</body>
+</html>
