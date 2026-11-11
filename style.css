@@ -93,13 +93,11 @@ html, body {
     width: 100%;
     height: calc(100% - 64px);
     display: block;
-    cursor: crosshair;
+    background: #ffffff;
     touch-action: none;
+    cursor: crosshair;
+}
 
-    background-color: #ffffff;
-    background-image:
-            linear-gradient(to right, #e0e0e0 1px, transparent 1px),
-            linear-gradient(to bottom, #e0e0e0 1px, transparent 1px);
-    background-size: 32px 32px;
-    background-position: 0 0;
+#board.grabbing {
+    cursor: grabbing;
 }

@@ -8,29 +8,69 @@ let isErasing = false;
 const strokes = [];
 let currentStroke = null;
 
+const view = { scale: 1, offsetX: 0, offsetY: 0 };
+const MIN_SCALE = 0.2;
+const MAX_SCALE = 8;
+
+const GRID_SIZE = 32;
+const GRID_COLOR = '#e5e5e5';
+
 function resizeCanvas() {
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
-
     canvas.width = Math.round(rect.width * dpr);
     canvas.height = Math.round(rect.height * dpr);
-
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
     redraw();
 }
 
 function redraw() {
     const rect = canvas.getBoundingClientRect();
-    ctx.clearRect(0, 0, rect.width, rect.height);
+    const dpr = window.devicePixelRatio || 1;
 
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.setTransform(
+        dpr * view.scale, 0,
+        0, dpr * view.scale,
+        dpr * view.offsetX, dpr * view.offsetY
+    );
+
+    drawGrid(rect);
     for (const s of strokes) drawStroke(s);
     if (currentStroke) drawStroke(currentStroke);
 }
 
+function drawGrid(rect) {
+    const left   = (-view.offsetX) / view.scale;
+    const top    = (-view.offsetY) / view.scale;
+    const right  = (rect.width  - view.offsetX) / view.scale;
+    const bottom = (rect.height - view.offsetY) / view.scale;
+
+    ctx.strokeStyle = GRID_COLOR;
+    ctx.lineWidth = 1 / view.scale;
+
+    const startX = Math.floor(left / GRID_SIZE) * GRID_SIZE;
+    const startY = Math.floor(top  / GRID_SIZE) * GRID_SIZE;
+
+    ctx.beginPath();
+    for (let x = startX; x <= right; x += GRID_SIZE) {
+        ctx.moveTo(x, top);
+        ctx.lineTo(x, bottom);
+    }
+    for (let y = startY; y <= bottom; y += GRID_SIZE) {
+        ctx.moveTo(left, y);
+        ctx.lineTo(right, y);
+    }
+    ctx.stroke();
+}
+
 function drawStroke(s) {
     ctx.strokeStyle = s.color;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2 / view.scale;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -38,7 +78,7 @@ function drawStroke(s) {
         if (s.points.length === 1) {
             const p = s.points[0];
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 1, 0, Math.PI * 2);
+            ctx.arc(p.x, p.y, 1 / view.scale, 0, Math.PI * 2);
             ctx.fillStyle = s.color;
             ctx.fill();
             return;
@@ -109,11 +149,13 @@ function drawStroke(s) {
     }
 }
 
-function getPos(e) {
+function screenToWorld(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
+    const sx = clientX - rect.left;
+    const sy = clientY - rect.top;
     return {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
+        x: (sx - view.offsetX) / view.scale,
+        y: (sy - view.offsetY) / view.scale,
     };
 }
 
@@ -132,11 +174,11 @@ function strokeHitsPoint(s, p, r) {
     return p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY;
 }
 
-function eraseAt(pos) {
-    const R = 12;
+function eraseAt(worldPos) {
+    const R = 12 / view.scale;
     let changed = false;
     for (let i = strokes.length - 1; i >= 0; i--) {
-        if (strokeHitsPoint(strokes[i], pos, R)) {
+        if (strokeHitsPoint(strokes[i], worldPos, R)) {
             strokes.splice(i, 1);
             changed = true;
         }
@@ -144,59 +186,158 @@ function eraseAt(pos) {
     if (changed) redraw();
 }
 
+const pointers = new Map();
+let gesture = null;
+
 canvas.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) {
+        if (e.button === 1 || e.button === 2) {
+            canvas.setPointerCapture(e.pointerId);
+            pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            startPanGesture();
+            return;
+        }
+        return;
+    }
 
     canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    const pos = getPos(e);
+    if (pointers.size >= 2) {
+        if (currentStroke) {
+            currentStroke = null;
+            redraw();
+        }
+        startPanGesture();
+        return;
+    }
+
+    const world = screenToWorld(e.clientX, e.clientY);
 
     if (isErasing) {
-        eraseAt(pos);
+        eraseAt(world);
         return;
     }
 
     if (currentShape === 'free') {
-        currentStroke = { type: 'free', color: currentColor, points: [pos] };
+        currentStroke = { type: 'free', color: currentColor, points: [world] };
     } else {
         currentStroke = {
             type: currentShape,
             color: currentColor,
-            x1: pos.x,
-            y1: pos.y,
-            x2: pos.x,
-            y2: pos.y,
+            x1: world.x, y1: world.y,
+            x2: world.x, y2: world.y,
         };
     }
     redraw();
 });
 
 canvas.addEventListener('pointermove', (e) => {
-    if (!currentStroke) {
-        if (isErasing && e.buttons) eraseAt(getPos(e));
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (gesture) {
+        updatePanGesture();
         return;
     }
 
-    const pos = getPos(e);
+    if (!currentStroke) {
+        if (isErasing && e.buttons) {
+            eraseAt(screenToWorld(e.clientX, e.clientY));
+        }
+        return;
+    }
 
+    const world = screenToWorld(e.clientX, e.clientY);
     if (currentStroke.type === 'free') {
-        currentStroke.points.push(pos);
+        currentStroke.points.push(world);
     } else {
-        currentStroke.x2 = pos.x;
-        currentStroke.y2 = pos.y;
+        currentStroke.x2 = world.x;
+        currentStroke.y2 = world.y;
     }
     redraw();
 });
 
-function finishStroke() {
-    if (!currentStroke) return;
-    strokes.push(currentStroke);
-    currentStroke = null;
+function onPointerEnd(e) {
+    pointers.delete(e.pointerId);
+
+    if (gesture && pointers.size < 2) {
+        gesture = null;
+        canvas.classList.remove('grabbing');
+        return;
+    }
+
+    if (currentStroke && pointers.size === 0) {
+        strokes.push(currentStroke);
+        currentStroke = null;
+        redraw();
+    }
+}
+canvas.addEventListener('pointerup', onPointerEnd);
+canvas.addEventListener('pointercancel', onPointerEnd);
+
+function getTwoPointers() {
+    const arr = Array.from(pointers.values());
+    return [arr[0], arr[1]];
+}
+
+function startPanGesture() {
+    if (pointers.size < 2) return;
+    const [p1, p2] = getTwoPointers();
+    const cx = (p1.x + p2.x) / 2;
+    const cy = (p1.y + p2.y) / 2;
+    const d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+
+    const rect = canvas.getBoundingClientRect();
+    gesture = {
+        startScale: view.scale,
+        worldCX: (cx - rect.left - view.offsetX) / view.scale,
+        worldCY: (cy - rect.top  - view.offsetY) / view.scale,
+        startDist: d,
+    };
+    canvas.classList.add('grabbing');
+}
+
+function updatePanGesture() {
+    if (!gesture || pointers.size < 2) return;
+    const [p1, p2] = getTwoPointers();
+    const cx = (p1.x + p2.x) / 2;
+    const cy = (p1.y + p2.y) / 2;
+    const d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    const rect = canvas.getBoundingClientRect();
+
+    let newScale = gesture.startScale * (d / gesture.startDist);
+    newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
+
+    view.scale = newScale;
+    view.offsetX = (cx - rect.left) - gesture.worldCX * newScale;
+    view.offsetY = (cy - rect.top ) - gesture.worldCY * newScale;
+
     redraw();
 }
 
-canvas.addEventListener('pointerup', finishStroke);
-canvas.addEventListener('pointercancel', finishStroke);
+canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+
+    const worldX = (sx - view.offsetX) / view.scale;
+    const worldY = (sy - view.offsetY) / view.scale;
+
+    const zoomFactor = Math.exp(-e.deltaY * 0.0015);
+    let newScale = view.scale * zoomFactor;
+    newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
+
+    view.scale = newScale;
+    view.offsetX = sx - worldX * newScale;
+    view.offsetY = sy - worldY * newScale;
+
+    redraw();
+}, { passive: false });
+
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 const eraserBtn = document.getElementById('eraserBtn');
 
@@ -228,6 +369,13 @@ eraserBtn.addEventListener('click', () => {
 document.getElementById('clearBtn').addEventListener('click', () => {
     strokes.length = 0;
     currentStroke = null;
+    redraw();
+});
+
+document.getElementById('resetViewBtn').addEventListener('click', () => {
+    view.scale = 1;
+    view.offsetX = 0;
+    view.offsetY = 0;
     redraw();
 });
 
