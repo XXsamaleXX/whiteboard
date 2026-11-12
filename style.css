@@ -101,3 +101,8 @@ html, body {
 #board.grabbing {
     cursor: grabbing;
 }
+
+.actions button:disabled {
+    opacity: 0.35;
+    cursor: default;
+}

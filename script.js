@@ -5,7 +5,7 @@ let currentColor = '#000000';
 let currentShape = 'free';
 let isErasing = false;
 
-const strokes = [];
+let strokes = [];
 let currentStroke = null;
 
 const view = { scale: 1, offsetX: 0, offsetY: 0 };
@@ -14,6 +14,47 @@ const MAX_SCALE = 8;
 
 const GRID_SIZE = 32;
 const GRID_COLOR = '#e5e5e5';
+
+const undoStack = [];
+const redoStack = [];
+const MAX_HISTORY = 100;
+
+function cloneStrokes(arr) {
+    if (typeof structuredClone === 'function') return structuredClone(arr);
+    return JSON.parse(JSON.stringify(arr));
+}
+
+function pushHistory() {
+    undoStack.push(cloneStrokes(strokes));
+    if (undoStack.length > MAX_HISTORY) undoStack.shift();
+    redoStack.length = 0;
+    updateHistoryButtons();
+}
+
+function updateHistoryButtons() {
+    const u = document.getElementById('undoBtn');
+    const r = document.getElementById('redoBtn');
+    if (u) u.disabled = undoStack.length === 0;
+    if (r) r.disabled = redoStack.length === 0;
+}
+
+function undo() {
+    if (undoStack.length === 0) return;
+    redoStack.push(cloneStrokes(strokes));
+    strokes = undoStack.pop();
+    currentStroke = null;
+    redraw();
+    updateHistoryButtons();
+}
+
+function redo() {
+    if (redoStack.length === 0) return;
+    undoStack.push(cloneStrokes(strokes));
+    strokes = redoStack.pop();
+    currentStroke = null;
+    redraw();
+    updateHistoryButtons();
+}
 
 function resizeCanvas() {
     const dpr = window.devicePixelRatio || 1;
@@ -92,7 +133,12 @@ function drawStroke(s) {
         return;
     }
 
-    if (s.type === 'circle') {
+    if (s.type === 'line') {
+        ctx.beginPath();
+        ctx.moveTo(s.x1, s.y1);
+        ctx.lineTo(s.x2, s.y2);
+        ctx.stroke();
+    } else if (s.type === 'circle') {
         const cx = (s.x1 + s.x2) / 2;
         const cy = (s.y1 + s.y2) / 2;
         const rx = Math.abs(s.x2 - s.x1) / 2;
@@ -167,6 +213,15 @@ function strokeHitsPoint(s, p, r) {
     if (s.type === 'free') {
         return s.points.some(pt => dist(pt, p) <= r);
     }
+    if (s.type === 'line') {
+        const { x1, y1, x2, y2 } = s;
+        const dx = x2 - x1, dy = y2 - y1;
+        const lenSq = dx * dx + dy * dy;
+        if (lenSq === 0) return dist({ x: x1, y: y1 }, p) <= r;
+        let t = ((p.x - x1) * dx + (p.y - y1) * dy) / lenSq;
+        t = Math.max(0, Math.min(1, t));
+        return dist({ x: x1 + t * dx, y: y1 + t * dy }, p) <= r;
+    }
     const minX = Math.min(s.x1, s.x2) - r;
     const maxX = Math.max(s.x1, s.x2) + r;
     const minY = Math.min(s.y1, s.y2) - r;
@@ -179,6 +234,7 @@ function eraseAt(worldPos) {
     let changed = false;
     for (let i = strokes.length - 1; i >= 0; i--) {
         if (strokeHitsPoint(strokes[i], worldPos, R)) {
+            if (!changed) pushHistory();
             strokes.splice(i, 1);
             changed = true;
         }
@@ -188,13 +244,20 @@ function eraseAt(worldPos) {
 
 const pointers = new Map();
 let gesture = null;
+let mousePan = null;
 
 canvas.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) {
         if (e.button === 1 || e.button === 2) {
             canvas.setPointerCapture(e.pointerId);
             pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-            startPanGesture();
+            mousePan = {
+                startX: e.clientX,
+                startY: e.clientY,
+                startOffsetX: view.offsetX,
+                startOffsetY: view.offsetY,
+            };
+            canvas.classList.add('grabbing');
             return;
         }
         return;
@@ -236,6 +299,13 @@ canvas.addEventListener('pointermove', (e) => {
     if (!pointers.has(e.pointerId)) return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
+    if (mousePan) {
+        view.offsetX = mousePan.startOffsetX + (e.clientX - mousePan.startX);
+        view.offsetY = mousePan.startOffsetY + (e.clientY - mousePan.startY);
+        redraw();
+        return;
+    }
+
     if (gesture) {
         updatePanGesture();
         return;
@@ -261,6 +331,12 @@ canvas.addEventListener('pointermove', (e) => {
 function onPointerEnd(e) {
     pointers.delete(e.pointerId);
 
+    if (mousePan) {
+        mousePan = null;
+        canvas.classList.remove('grabbing');
+        return;
+    }
+
     if (gesture && pointers.size < 2) {
         gesture = null;
         canvas.classList.remove('grabbing');
@@ -268,6 +344,7 @@ function onPointerEnd(e) {
     }
 
     if (currentStroke && pointers.size === 0) {
+        pushHistory();
         strokes.push(currentStroke);
         currentStroke = null;
         redraw();
@@ -339,6 +416,18 @@ canvas.addEventListener('wheel', (e) => {
 
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
+window.addEventListener('keydown', (e) => {
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (!ctrl) return;
+    if (e.key === 'z' || e.key === 'Z') {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+    } else if (e.key === 'y' || e.key === 'Y') {
+        e.preventDefault();
+        redo();
+    }
+});
+
 const eraserBtn = document.getElementById('eraserBtn');
 
 document.querySelectorAll('.color-btn').forEach(btn => {
@@ -367,7 +456,9 @@ eraserBtn.addEventListener('click', () => {
 });
 
 document.getElementById('clearBtn').addEventListener('click', () => {
-    strokes.length = 0;
+    if (strokes.length === 0) return;
+    pushHistory();
+    strokes = [];
     currentStroke = null;
     redraw();
 });
@@ -379,5 +470,9 @@ document.getElementById('resetViewBtn').addEventListener('click', () => {
     redraw();
 });
 
+document.getElementById('undoBtn').addEventListener('click', undo);
+document.getElementById('redoBtn').addEventListener('click', redo);
+
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
+updateHistoryButtons();
